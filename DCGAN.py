@@ -1,7 +1,6 @@
 import os
 import time
 import pandas as pd
-from six.moves import xrange
 
 from helpers import *
 
@@ -98,7 +97,7 @@ class DCGAN(object):
 
         for epoch in range(25):
             batch_idxs = self.data_y.shape[0] // self.batch_size
-            for idx in xrange(0, batch_idxs):
+            for idx in range(batch_idxs):
                 batch_images = self.data_X[idx * 64:(idx + 1) * 64]
                 batch_labels = self.data_y[idx * 64:(idx + 1) * 64]
 

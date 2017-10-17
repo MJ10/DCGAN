@@ -1,3 +1,6 @@
+"""
+Some methods are from https://github.com/carpedm/DCGAN-tensorflow
+"""
 import numpy as np
 import scipy.misc
 import tensorflow as tf

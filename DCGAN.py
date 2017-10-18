@@ -10,9 +10,11 @@ class DCGAN(object):
                  batch_size=64, sample_num=64, output_height=28, output_width=28,
                  y_dim=10, z_dim=100, gf_dim=64, df_dim=64,
                  gfc_dim=1024, dfc_dim=1024,
-                 checkpoint_dir='checkpoints'):
+                 checkpoint_dir='checkpoints', dataset='mnist'):
         self.sess = sess
         self.crop = crop
+
+        self.dataset = dataset
 
         self.batch_size = batch_size
         self.sample_num = sample_num
@@ -33,15 +35,23 @@ class DCGAN(object):
 
         self.d_bn1 = batch_norm(name='d_bn1')
         self.d_bn2 = batch_norm(name='d_bn2')
+        self.d_bn3 = batch_norm(name='d_bn3')
 
         self.g_bn0 = batch_norm(name='g_bn0')
         self.g_bn1 = batch_norm(name='g_bn1')
         self.g_bn2 = batch_norm(name='g_bn2')
+        self.g_bn3 = batch_norm(name='g_bn3')
 
         self.checkpoint_dir = checkpoint_dir
 
-        self.data_X, self.data_y = self.load_mnist()
-        self.data_X = np.reshape(self.data_X, [-1, self.input_height, self.input_width, 1])
+        if dataset == 'mnist':
+            self.data_X, self.data_y = self.load_mnist()
+            self.data_X = np.reshape(self.data_X, [-1, self.input_height, self.input_width, 1])
+        elif dataset == 'cifar':
+            self.data_X, self.data_y = self.load_cifar()
+            self.data_X = np.reshape(self.data_X, [-1, 3,self.input_height, self.input_width])
+            self.data_X = np.rollaxis(self.data_X, 1, 4)
+
         self.c_dim = self.data_X[0].shape[-1]
 
         self.build_model()
@@ -146,70 +156,158 @@ class DCGAN(object):
         with tf.variable_scope("discriminator") as scope:
             if reuse:
                 scope.reuse_variables()
+            if self.dataset == 'mnist':
+                yb = tf.reshape(y, [self.batch_size, 1, 1, self.y_dim])
+                x = conv_cond_concat(image, yb)
 
-            yb = tf.reshape(y, [self.batch_size, 1, 1, self.y_dim])
-            x = conv_cond_concat(image, yb)
+                h0 = leaky_relu(conv_layer(x, self.c_dim + self.y_dim, name='d_h0_conv'))
+                h0 = conv_cond_concat(h0, yb)
 
-            h0 = leaky_relu(conv_layer(x, self.c_dim + self.y_dim, name='d_h0_conv'))
-            h0 = conv_cond_concat(h0, yb)
+                h1 = leaky_relu(self.d_bn1(conv_layer(h0, self.df_dim + self.y_dim, name='d_h1_conv')))
+                h1 = tf.reshape(h1, [self.batch_size, -1])
+                h1 = concat([h1, y], 1)
 
-            h1 = leaky_relu(self.d_bn1(conv_layer(h0, self.df_dim + self.y_dim, name='d_h1_conv')))
-            h1 = tf.reshape(h1, [self.batch_size, -1])
-            h1 = concat([h1, y], 1)
+                h2 = leaky_relu(self.d_bn2(dense(h1, self.dfc_dim, 'd_h2_lin')))
+                h2 = concat([h2, y], 1)
 
-            h2 = leaky_relu(self.d_bn2(dense(h1, self.dfc_dim, 'd_h2_lin')))
-            h2 = concat([h2, y], 1)
+                h3 = dense(h2, 1, 'd_h3_lin')
 
-            h3 = dense(h2, 1, 'd_h3_lin')
+                return tf.nn.sigmoid(h3), h3
+            elif self.dataset == 'cifar':
+                yb = tf.reshape(y, [self.batch_size, 1, 1, self.y_dim])
+                x = conv_cond_concat(image, yb)
 
-            return tf.nn.sigmoid(h3), h3
+                print(x.shape)
+
+                h0 = leaky_relu(conv_layer(x, self.c_dim + self.y_dim, name='d_h0_conv'))
+                h0 = conv_cond_concat(h0, yb)
+
+                print(h0.shape)
+
+                h1 = leaky_relu(self.d_bn1(conv_layer(h0, self.df_dim + self.y_dim, name='d_h1_conv')))
+                # h1 = tf.reshape(h1, [self.batch_size, -1])
+                h1 = conv_cond_concat(h1, yb)
+                # h1 = concat([h1, y], 1)
+
+                print(h1.shape)
+
+                h2 = leaky_relu(self.d_bn2(conv_layer(h1, self.df_dim * 2 + self.y_dim, name='d_h2_conv')))
+                h2 = tf.reshape(h2, [self.batch_size, -1])
+                h2 = concat([h2, y], 1)
+
+                print(h2.shape)
+
+                h3 = leaky_relu(self.d_bn3(dense(h2, self.dfc_dim * 2, 'd_h3_lin')))
+                h3 = concat([h3, y], 1)
+
+                h4 = dense(h3, 1, 'd_h4_lin')
+
+                return tf.nn.sigmoid(h4), h4
 
     def generator(self, z, y=None):
         with tf.variable_scope("generator") as scope:
-            s_h, s_w = self.output_height, self.output_width
-            s_h2, s_h4 = int(s_h / 2), int(s_h / 4)
-            s_w2, s_w4 = int(s_w / 2), int(s_w / 4)
 
-            yb = tf.reshape(y, [self.batch_size, 1, 1, self.y_dim])
-            z = concat([z, y], 1)
+            if self.dataset == 'mnist':
+                s_h, s_w = self.output_height, self.output_width
+                s_h2, s_h4 = int(s_h / 2), int(s_h / 4)
+                s_w2, s_w4 = int(s_w / 2), int(s_w / 4)
 
-            h0 = tf.nn.relu(self.g_bn0(dense(z, self.gfc_dim, 'g_h0_lin')))
-            h0 = concat([h0, y], 1)
+                yb = tf.reshape(y, [self.batch_size, 1, 1, self.y_dim])
+                z = concat([z, y], 1)
 
-            h1 = tf.nn.relu(self.g_bn1(dense(h0, self.gf_dim * 2 * s_h4 * s_w4, 'g_h1_lin')))
-            h1 = tf.reshape(h1, [self.batch_size, s_h4, s_w4, self.gf_dim * 2])
+                h0 = tf.nn.relu(self.g_bn0(dense(z, self.gfc_dim, 'g_h0_lin')))
+                h0 = concat([h0, y], 1)
 
-            h1 = conv_cond_concat(h1, yb)
+                h1 = tf.nn.relu(self.g_bn1(dense(h0, self.gf_dim * 2 * s_h4 * s_w4, 'g_h1_lin')))
+                h1 = tf.reshape(h1, [self.batch_size, s_h4, s_w4, self.gf_dim * 2])
 
-            h2 = tf.nn.relu(self.g_bn2(conv_transpose_layer(h1,
-                                                [self.batch_size, s_h2, s_w2, self.gf_dim * 2], name='g_h2')))
-            h2 = conv_cond_concat(h2, yb)
+                h1 = conv_cond_concat(h1, yb)
 
-            return tf.nn.sigmoid(conv_transpose_layer(h2, [self.batch_size, s_h, s_w, self.c_dim], name='g_h3'))
+                h2 = tf.nn.relu(self.g_bn2(conv_transpose_layer(h1,
+                                                    [self.batch_size, s_h2, s_w2, self.gf_dim * 2], name='g_h2')))
+                h2 = conv_cond_concat(h2, yb)
+
+                return tf.nn.sigmoid(conv_transpose_layer(h2, [self.batch_size, s_h, s_w, self.c_dim], name='g_h3'))
+
+            elif self.dataset == 'cifar':
+                s_h, s_w = self.output_height, self.output_width
+                s_h2, s_h4, s_h8 = int(s_h / 2), int(s_h / 4), int(s_h / 8)
+                s_w2, s_w4, s_w8 = int(s_w / 2), int(s_w / 4), int(s_w / 8)
+
+                yb = tf.reshape(y, [self.batch_size, 1, 1, self.y_dim])
+                z = concat([z, y], 1)
+
+                h0 = tf.nn.relu(self.g_bn0(dense(z, self.gfc_dim, 'g_h0_lin')))
+                h0 = concat([h0, y], 1)
+
+                h1 = tf.nn.relu(self.g_bn1(dense(h0, self.gf_dim * 2 * s_h8 * s_w8, 'g_h1_lin')))
+                h1 = tf.reshape(h1, [self.batch_size, s_h8, s_w8, self.gf_dim * 2])
+
+                h1 = conv_cond_concat(h1, yb)
+
+                h2 = tf.nn.relu(self.g_bn2(conv_transpose_layer(h1,
+                                                                [self.batch_size, s_h4, s_w4, self.gf_dim * 2],
+                                                                name='g_h2')))
+                h2 = conv_cond_concat(h2, yb)
+
+                h3 = tf.nn.relu(self.g_bn3(conv_transpose_layer(h2, [self.batch_size, s_h2, s_w2, self.c_dim], name='g_h3')))
+
+                h3 = conv_cond_concat(h3, yb)
+
+                return tf.nn.tanh(conv_transpose_layer(h3, [self.batch_size, s_h, s_w, self.c_dim], name='g_h4'))
 
     def sampler(self, z, y=None):
         with tf.variable_scope("generator") as scope:
             scope.reuse_variables()
-            s_h, s_w = self.output_height, self.output_width
-            s_h2, s_h4 = int(s_h / 2), int(s_h / 4)
-            s_w2, s_w4 = int(s_w / 2), int(s_w / 4)
+            if self.dataset == 'mnist':
+                s_h, s_w = self.output_height, self.output_width
+                s_h2, s_h4 = int(s_h / 2), int(s_h / 4)
+                s_w2, s_w4 = int(s_w / 2), int(s_w / 4)
 
-            yb = tf.reshape(y, [self.batch_size, 1, 1, self.y_dim])
-            z = concat([z, y], 1)
+                yb = tf.reshape(y, [self.batch_size, 1, 1, self.y_dim])
+                z = concat([z, y], 1)
 
-            h0 = tf.nn.relu(self.g_bn0(dense(z, self.gfc_dim, 'g_h0_lin'), train=False))
-            h0 = concat([h0, y], 1)
+                h0 = tf.nn.relu(self.g_bn0(dense(z, self.gfc_dim, 'g_h0_lin'), train=False))
+                h0 = concat([h0, y], 1)
 
-            h1 = tf.nn.relu(self.g_bn1(
-                dense(h0, self.gf_dim * 2 * s_h4 * s_w4, 'g_h1_lin'), train=False))
-            h1 = tf.reshape(h1, [self.batch_size, s_h4, s_w4, self.gf_dim * 2])
-            h1 = conv_cond_concat(h1, yb)
+                h1 = tf.nn.relu(self.g_bn1(
+                    dense(h0, self.gf_dim * 2 * s_h4 * s_w4, 'g_h1_lin'), train=False))
+                h1 = tf.reshape(h1, [self.batch_size, s_h4, s_w4, self.gf_dim * 2])
+                h1 = conv_cond_concat(h1, yb)
 
-            h2 = tf.nn.relu(self.g_bn2(
-                conv_transpose_layer(h1, [self.batch_size, s_h2, s_w2, self.gf_dim * 2], name='g_h2'), train=False))
-            h2 = conv_cond_concat(h2, yb)
+                h2 = tf.nn.relu(self.g_bn2(
+                    conv_transpose_layer(h1, [self.batch_size, s_h2, s_w2, self.gf_dim * 2], name='g_h2'), train=False))
+                h2 = conv_cond_concat(h2, yb)
 
-            return tf.nn.sigmoid(conv_transpose_layer(h2, [self.batch_size, s_h, s_w, self.c_dim], name='g_h3'))
+                return tf.nn.sigmoid(conv_transpose_layer(h2, [self.batch_size, s_h, s_w, self.c_dim], name='g_h3'))
+
+            elif self.dataset == 'cifar':
+                s_h, s_w = self.output_height, self.output_width
+                s_h2, s_h4, s_h8 = int(s_h / 2), int(s_h / 4), int(s_h / 8)
+                s_w2, s_w4, s_w8 = int(s_w / 2), int(s_w / 4), int(s_w / 8)
+
+                yb = tf.reshape(y, [self.batch_size, 1, 1, self.y_dim])
+                z = concat([z, y], 1)
+
+                h0 = tf.nn.relu(self.g_bn0(dense(z, self.gfc_dim, 'g_h0_lin'), train=False))
+                h0 = concat([h0, y], 1)
+
+                h1 = tf.nn.relu(self.g_bn1(dense(h0, self.gf_dim * 2 * s_h8 * s_w8, 'g_h1_lin'), train=False))
+                h1 = tf.reshape(h1, [self.batch_size, s_h8, s_w8, self.gf_dim * 2])
+
+                h1 = conv_cond_concat(h1, yb)
+
+                h2 = tf.nn.relu(self.g_bn2(conv_transpose_layer(h1,
+                                                                [self.batch_size, s_h4, s_w4, self.gf_dim * 2],
+                                                                name='g_h2'), train=False))
+                h2 = conv_cond_concat(h2, yb)
+
+                h3 = tf.nn.relu(self.g_bn3(conv_transpose_layer(h2, [self.batch_size, s_h2, s_w2, self.c_dim],
+                                                                name='g_h3'), train=False))
+
+                h3 = conv_cond_concat(h3, yb)
+
+                return tf.nn.tanh(conv_transpose_layer(h3, [self.batch_size, s_h, s_w, self.c_dim], name='g_h4'))
 
     def load_mnist(self):
         data = pd.read_csv('train.csv')
@@ -229,6 +327,43 @@ class DCGAN(object):
             return labels_one_hot
 
         y = dense_to_one_hot(labels_flat, self.y_dim)
+        y = y.astype(np.uint8)
+
+        seed = 547
+        np.random.seed(seed)
+        np.random.shuffle(X)
+        np.random.seed(seed)
+        np.random.shuffle(y)
+
+        return X / 255., y
+
+    def unpickle(self, file):
+        import pickle
+        with open(file, 'rb') as fo:
+            dict = pickle.load(fo, encoding='bytes')
+        return dict
+
+    def load_cifar(self):
+        tr1 = self.unpickle('data/data_batch_1')
+        tr2 = self.unpickle('data/data_batch_2')
+        tr3 = self.unpickle('data/data_batch_3')
+        tr4 = self.unpickle('data/data_batch_4')
+        tr5 = self.unpickle('data/data_batch_5')
+        te = self.unpickle('data/test_batch')
+
+        X = np.concatenate((tr1[b'data'], tr2[b'data'], tr3[b'data'],
+                            tr4[b'data'], tr5[b'data'], te[b'data']), axis=0)
+        y = np.concatenate((tr1[b'labels'], tr2[b'labels'], tr3[b'labels'],
+                            tr4[b'labels'], tr5[b'labels'], te[b'labels']), axis=0)
+
+        def dense_to_one_hot(labels_dense, num_classes):
+            num_labels = labels_dense.shape[0]
+            index_offset = np.arange(num_labels) * num_classes
+            labels_one_hot = np.zeros((num_labels, num_classes))
+            labels_one_hot.flat[index_offset + labels_dense.ravel()] = 1
+            return labels_one_hot
+
+        y = dense_to_one_hot(y, self.y_dim)
         y = y.astype(np.uint8)
 
         seed = 547

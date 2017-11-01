@@ -177,25 +177,17 @@ class DCGAN(object):
                 yb = tf.reshape(y, [self.batch_size, 1, 1, self.y_dim])
                 x = conv_cond_concat(image, yb)
 
-                print(x.shape)
-
                 h0 = leaky_relu(conv_layer(x, self.c_dim + self.y_dim, name='d_h0_conv'))
                 h0 = conv_cond_concat(h0, yb)
-
-                print(h0.shape)
 
                 h1 = leaky_relu(self.d_bn1(conv_layer(h0, self.df_dim + self.y_dim, name='d_h1_conv')))
                 # h1 = tf.reshape(h1, [self.batch_size, -1])
                 h1 = conv_cond_concat(h1, yb)
                 # h1 = concat([h1, y], 1)
 
-                print(h1.shape)
-
                 h2 = leaky_relu(self.d_bn2(conv_layer(h1, self.df_dim * 2 + self.y_dim, name='d_h2_conv')))
                 h2 = tf.reshape(h2, [self.batch_size, -1])
                 h2 = concat([h2, y], 1)
-
-                print(h2.shape)
 
                 h3 = leaky_relu(self.d_bn3(dense(h2, self.dfc_dim * 2, 'd_h3_lin')))
                 h3 = concat([h3, y], 1)
@@ -231,17 +223,17 @@ class DCGAN(object):
 
             elif self.dataset == 'cifar':
                 s_h, s_w = self.output_height, self.output_width
-                s_h2, s_h4, s_h8 = int(s_h / 2), int(s_h / 4), int(s_h / 8)
-                s_w2, s_w4, s_w8 = int(s_w / 2), int(s_w / 4), int(s_w / 8)
+                s_h2, s_h4, s_h8, s_h16 = int(s_h / 2), int(s_h / 4), int(s_h / 8), int(s_h / 16)
+                s_w2, s_w4, s_w8, s_w16 = int(s_w / 2), int(s_w / 4), int(s_w / 8), int(s_w / 16)
 
                 yb = tf.reshape(y, [self.batch_size, 1, 1, self.y_dim])
                 z = concat([z, y], 1)
 
-                h0 = tf.nn.relu(self.g_bn0(dense(z, self.gfc_dim, 'g_h0_lin')))
-                h0 = concat([h0, y], 1)
+                h0 = tf.nn.relu(self.g_bn0(dense(z, self.gf_dim * 4 * s_h16 * s_w16, 'g_h0_lin')))
+                h0 = tf.reshape(h0, [self.batch_size, s_h16, s_w16, self.gf_dim * 4])
+                h0 = conv_cond_concat(h0, yb)
 
-                h1 = tf.nn.relu(self.g_bn1(dense(h0, self.gf_dim * 2 * s_h8 * s_w8, 'g_h1_lin')))
-                h1 = tf.reshape(h1, [self.batch_size, s_h8, s_w8, self.gf_dim * 2])
+                h1 = tf.nn.relu(self.g_bn1(conv_transpose_layer(h0, [self.batch_size, s_h8, s_w8, self.gf_dim * 4], 'g_h1_lin')))
 
                 h1 = conv_cond_concat(h1, yb)
 
@@ -250,7 +242,7 @@ class DCGAN(object):
                                                                 name='g_h2')))
                 h2 = conv_cond_concat(h2, yb)
 
-                h3 = tf.nn.relu(self.g_bn3(conv_transpose_layer(h2, [self.batch_size, s_h2, s_w2, self.c_dim], name='g_h3')))
+                h3 = tf.nn.relu(self.g_bn3(conv_transpose_layer(h2, [self.batch_size, s_h2, s_w2, self.gf_dim], name='g_h3')))
 
                 h3 = conv_cond_concat(h3, yb)
 
@@ -283,27 +275,27 @@ class DCGAN(object):
 
             elif self.dataset == 'cifar':
                 s_h, s_w = self.output_height, self.output_width
-                s_h2, s_h4, s_h8 = int(s_h / 2), int(s_h / 4), int(s_h / 8)
-                s_w2, s_w4, s_w8 = int(s_w / 2), int(s_w / 4), int(s_w / 8)
+                s_h2, s_h4, s_h8, s_h16 = int(s_h / 2), int(s_h / 4), int(s_h / 8), int(s_h / 16)
+                s_w2, s_w4, s_w8, s_w16 = int(s_w / 2), int(s_w / 4), int(s_w / 8), int(s_w / 16)
 
                 yb = tf.reshape(y, [self.batch_size, 1, 1, self.y_dim])
                 z = concat([z, y], 1)
 
-                h0 = tf.nn.relu(self.g_bn0(dense(z, self.gfc_dim, 'g_h0_lin'), train=False))
-                h0 = concat([h0, y], 1)
+                h0 = tf.nn.relu(self.g_bn0(dense(z, self.gf_dim * 4 * s_h16 * s_w16, 'g_h0_lin')))
+                h0 = tf.reshape(h0, [self.batch_size, s_h16, s_w16, self.gf_dim * 4])
+                h0 = conv_cond_concat(h0, yb)
 
-                h1 = tf.nn.relu(self.g_bn1(dense(h0, self.gf_dim * 2 * s_h8 * s_w8, 'g_h1_lin'), train=False))
-                h1 = tf.reshape(h1, [self.batch_size, s_h8, s_w8, self.gf_dim * 2])
+                h1 = tf.nn.relu(self.g_bn1(conv_transpose_layer(h0, [self.batch_size, s_h8, s_w8, self.gf_dim * 4], 'g_h1_lin')))
 
                 h1 = conv_cond_concat(h1, yb)
 
                 h2 = tf.nn.relu(self.g_bn2(conv_transpose_layer(h1,
                                                                 [self.batch_size, s_h4, s_w4, self.gf_dim * 2],
-                                                                name='g_h2'), train=False))
+                                                                name='g_h2')))
                 h2 = conv_cond_concat(h2, yb)
 
-                h3 = tf.nn.relu(self.g_bn3(conv_transpose_layer(h2, [self.batch_size, s_h2, s_w2, self.c_dim],
-                                                                name='g_h3'), train=False))
+                h3 = tf.nn.relu(
+                    self.g_bn3(conv_transpose_layer(h2, [self.batch_size, s_h2, s_w2, self.gf_dim], name='g_h3')))
 
                 h3 = conv_cond_concat(h3, yb)
 

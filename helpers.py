@@ -67,6 +67,10 @@ def conv_cond_concat(x, y):
     return concat([x, y*tf.ones([x_shapes[0], x_shapes[1], x_shapes[2], y_shapes[3]])], 3)
 
 
+def conv_out_size_same(size, stride):
+    return int(math.ceil(float(size) / float(stride)))
+
+
 def concat(tensors, axis, *args, **kwargs):
     return tf.concat(tensors, axis, *args, **kwargs)
 
